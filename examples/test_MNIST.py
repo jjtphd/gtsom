@@ -22,6 +22,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import MinMaxScaler
 
 from gtsom import GTSOM
+from gtsom import build_ctab
 
 OUTDIR   = os.path.dirname(os.path.abspath(__file__))
 SEED     = 42
@@ -98,6 +99,10 @@ ax.grid(True, alpha=0.3)
 plt.tight_layout()
 savefig(fig_scree, 'mnist_pca_scree.png')
 
+# Build a color table to use with data labels 
+ctab = build_ctab(y)
+
+
 # ------------------------------------------------------------------
 # 3. Initialise GTSOM
 # ------------------------------------------------------------------
@@ -121,6 +126,7 @@ som.from_grid(
     coord_init='hex',
     W_init='random',
     labels=y,
+    ctab=ctab
 )
 print(f"  Init done in {time.perf_counter() - t0:.1f}s")
 print(f"  {som}")

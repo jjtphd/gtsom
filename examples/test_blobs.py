@@ -28,6 +28,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
 from gtsom import GTSOM
+from gtsom import build_ctab
 
 OUTDIR   = os.path.dirname(os.path.abspath(__file__))
 SEED     = 42
@@ -97,6 +98,9 @@ ax.grid(True, alpha=0.3)
 plt.tight_layout()
 savefig(fig_pca, 'blobs_pca_reference.png')
 
+# Build a color table to use with data labels 
+ctab = build_ctab(y)
+
 # ------------------------------------------------------------------
 # 3. Initialize GTSOM — data-driven topology via from_data
 # ------------------------------------------------------------------
@@ -123,6 +127,7 @@ som.from_data(
     W_init='kmeans',
     coord_topo='gabriel',
     labels=y,
+    ctab = ctab
 )
 print(f"  Init done in {time.perf_counter() - t0:.2f}s")
 print(f"  {som}")

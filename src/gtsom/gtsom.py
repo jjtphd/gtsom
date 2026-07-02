@@ -328,6 +328,7 @@ class GTSOM:
         self.W0         = None   # initial prototype matrix (never modified)
         self.coords0    = None   # initial embedding coords (never modified)
         self.nbr_W      = None   # neighborhood weight matrix (M, M)
+        self.ctab       = None   # {str_label: hex_color} dict, or None if no labels
 
         # ------------------------------------------------------------------
         # Training state
@@ -340,13 +341,17 @@ class GTSOM:
         # populated by from_grid / from_data. Subsequent entries are
         # appended by fit() after each epoch.
         # Each dict contains:
-        #   'age'        : int                   — self.age at snapshot time
-        #   'mqe'        : float                 — global RMSE over all data
-        #                                          (sqrt of mean squared L2 dist)
-        #   'W_mqe'      : ndarray (M,)          — per-prototype RMSE, nan for empty RFs
-        #   'delBMU'     : float                 — fraction of data whose BMU changed
-        #   'dr_metrics' : DRMetricsResult       — DR quality metrics, or None
-        #   'fig'        : plotnine.ggplot or None — plot captured this epoch
+        #   'age'        : int              — self.age at snapshot time
+        #   'mqe'        : float            — global RMSE over all data
+        #                                     (sqrt of mean squared L2 dist)
+        #   'W_mqe'      : ndarray (M,)     — per-prototype RMSE, nan for empty RFs
+        #   'delBMU'     : float            — fraction of data whose BMU changed
+        #   'dr_metrics' : DRMetricsResult  — DR quality metrics, or None
+        #   'coords'     : ndarray (M, 2)   — prototype output-space positions
+        #   'adjacency'  : csr_matrix       — graph topology (M, M)
+        #   'RFSize'     : ndarray (M,)     — receptive field sizes
+        #   'WL'         : ndarray (M,) or None — winning label per prototype
+        #   'color_by'   : str              — resolved color mode at snapshot time
         self.learn_history_ = []
 
     # ------------------------------------------------------------------
@@ -384,6 +389,7 @@ class GTSOM:
         coord_init='hex',
         W_init='random',
         labels=None,
+        ctab=None,
     ):
         """
         Set a regular grid output topology and initialize prototypes.
@@ -415,7 +421,17 @@ class GTSOM:
         labels : array-like, shape (N,), default None
             Optional observation labels. If provided, prototype-level label
             summaries (WL, WL_Dist, WL_Purity) are computed during the
-            initial recall and stored on ``self.recaller``.
+            initial recall and stored on ``self.recaller``. Labels must also
+            be supplied on every subsequent call to :meth:`fit` to keep
+            per-epoch snapshot ``WL`` values current.
+        ctab : dict or None, default None
+            Optional ``{label: hex_color_string}`` color table, as returned
+            by :func:`~gtsom.vis_tools.parse_ctab`. When provided it is
+            stored as ``self.ctab`` and used for all label-colored plots.
+            When ``None`` and ``labels`` are provided, a color table is
+            generated automatically via
+            :func:`~gtsom.vis_tools.build_ctab`. Ignored when ``labels``
+            is ``None``.
 
         Returns
         -------
@@ -465,7 +481,7 @@ class GTSOM:
         else:  # 'pca'
             W = _init_W_pca(X, embed, self.random_state)
 
-        self._init_architecture(X, W, embed, labels)
+        self._init_architecture(X, W, embed, labels, ctab)
         return self
 
     def from_data(
@@ -477,6 +493,7 @@ class GTSOM:
         W_init='kmeans',
         coord_topo='delaunay',
         labels=None,
+        ctab=None,
     ):
         """
         Set a data-driven output topology and initialize prototypes.
@@ -545,7 +562,17 @@ class GTSOM:
         labels : array-like, shape (N,), default None
             Optional observation labels. If provided, prototype-level label
             summaries (WL, WL_Dist, WL_Purity) are computed during the
-            initial recall and stored on ``self.recaller``.
+            initial recall and stored on ``self.recaller``. Labels must also
+            be supplied on every subsequent call to :meth:`fit` to keep
+            per-epoch snapshot ``WL`` values current.
+        ctab : dict or None, default None
+            Optional ``{label: hex_color_string}`` color table, as returned
+            by :func:`~gtsom.vis_tools.parse_ctab`. When provided it is
+            stored as ``self.ctab`` and used for all label-colored plots.
+            When ``None`` and ``labels`` are provided, a color table is
+            generated automatically via
+            :func:`~gtsom.vis_tools.build_ctab`. Ignored when ``labels``
+            is ``None``.
 
         Returns
         -------
@@ -612,7 +639,7 @@ class GTSOM:
         else:  # 'gabriel'
             embed = Embedding.from_gabriel(coords)
 
-        self._init_architecture(X, W, embed, labels)
+        self._init_architecture(X, W, embed, labels, ctab)
         return self
 
     # ------------------------------------------------------------------
@@ -636,15 +663,20 @@ class GTSOM:
         n_epochs : int
             Number of training epochs to run in this call.
         labels : array-like, shape (N,), default None
-            Optional observation labels. If provided, prototype-level
-            label summaries (WL, WL_Dist, WL_Purity) are recomputed
-            each epoch and stored on ``self.recaller``.
+            Observation labels. If labels were provided at
+            :meth:`from_grid` or :meth:`from_data` time, the same labels
+            must be supplied here on every call so that per-epoch snapshot
+            ``WL`` values remain current and consistent with ``self.ctab``.
+            A :class:`~gtsom.utils.DataValidator` warning is issued if
+            labels are omitted or differ from those supplied at
+            initialization. If no labels were provided at initialization,
+            this parameter should be ``None``.
         verbose : bool, default True
             If True, print a formatted table of training metrics after
             each epoch.
         plot_every : int, default 5
-            Capture a SOM plot into ``self.learn_history_`` every this
-            many epochs. Set to 0 to disable in-training plotting.
+            Display a SOM plot every this many epochs during training.
+            Set to 0 to disable in-training plotting.
 
         Raises
         ------
@@ -663,7 +695,7 @@ class GTSOM:
 
         X = np.asarray(X)
         if self._validator is not None:
-            self._validator.check(X, context="fit")
+            self._validator.check(X, labels=labels, context="fit")
 
         _HDR = f"{'Epoch':>7}   {'rho':>6}   {'alpha':>6}   {'MQE':>8}   {'delBMU':>7}"
         _SEP = f"{'-----':>7}   {'------':>6}   {'------':>6}   {'--------':>8}   {'-------':>7}"
@@ -938,6 +970,7 @@ class GTSOM:
         if color_by == 'labels':
             return vis_embedding_discrete(
                 z            = self.recaller.WL,
+                ctab         = self.ctab,
                 legend_title = 'Label',
                 **shared,
             )
@@ -947,6 +980,159 @@ class GTSOM:
                 if color_by == 'mqe'
                 else rf
             )
+            legend_title = 'MQE' if color_by == 'mqe' else 'RF Size'
+            return vis_embedding_continuous(
+                z            = z,
+                cmap         = cmap,
+                legend_title = legend_title,
+                **shared,
+            )
+
+    def get_snapshot_fig(
+        self,
+        index,
+        cmap='viridis',
+        rf_size_log_threshold=10,
+        legend_pos='right',
+        title='GTSOM',
+        subtitle=None,
+        xlab=r'SOM$_1$',
+        ylab=r'SOM$_2$',
+    ):
+        """
+        Reconstruct a live, modifiable plotnine figure from a historical
+        snapshot stored in ``self.learn_history_``.
+
+        Unlike :meth:`plot`, which generates a figure from the current live
+        GTSOM state, this method rebuilds a figure from the coordinates,
+        adjacency, and color data that were recorded at a specific training
+        epoch. The returned object is a fully live ``plotnine.ggplot`` that
+        supports the ``+`` operator for theme overrides, relabeling, etc.
+
+        Parameters
+        ----------
+        index : int
+            Index into ``learn_history_``. ``0`` is the initialization
+            snapshot (age 0). Negative indices work as usual (``-1`` gives
+            the final snapshot).
+        cmap : str, default 'viridis'
+            Colormap for continuous quantities (``color_by='mqe'`` or
+            ``'rfsize'``). Ignored for label plots.
+        rf_size_log_threshold : float, default 10
+            Controls the point-size transform for receptive field sizes.
+            See :meth:`plot` for full details.
+        legend_pos : str, default 'right'
+            Legend position: ``'right'``, ``'bottom'``, or ``'none'``.
+        title : str or None, default 'GTSOM'
+            Main title line.
+        subtitle : str or None, default None
+            Subtitle. If None, auto-generates ``'Epoch {age}'`` from the
+            snapshot's recorded age.
+        xlab : str, default 'SOM$_1$'
+            Horizontal axis label.
+        ylab : str, default 'SOM$_2$'
+            Vertical axis label.
+
+        Returns
+        -------
+        plotnine.ggplot
+            A live, modifiable figure. Supports ``+ theme(...)``,
+            ``+ labs(...)``, etc.
+
+        Raises
+        ------
+        IndexError
+            If ``index`` is out of range for ``learn_history_``.
+        RuntimeError
+            If :meth:`from_grid` or :meth:`from_data` has not been called.
+        NotImplementedError
+            If the snapshot embedding is not 2-D.
+        """
+        if self.W is None:
+            raise RuntimeError(
+                "Architecture not initialized. "
+                "Call from_grid() or from_data() before get_snapshot_fig()."
+            )
+
+        from .vis_tools import vis_embedding_discrete, vis_embedding_continuous
+
+        snap = self.learn_history_[index]   # raises IndexError if out of range
+
+        coords    = snap['coords']          # (M, 2)
+        adjacency = snap['adjacency']       # sparse CSR
+        RFSize    = snap['RFSize']          # (M,)
+        WL        = snap['WL']             # (M,) or None
+        color_by  = snap['color_by']        # 'labels' or 'mqe'
+        W_mqe     = snap['W_mqe']           # (M,)
+        age       = snap['age']
+        dm        = snap.get('dr_metrics')  # DRMetricsResult or None
+
+        if coords.shape[1] != 2:
+            raise NotImplementedError(
+                f"get_snapshot_fig() only supports 2-D embeddings; "
+                f"snapshot coords have shape {coords.shape}."
+            )
+
+        # --- Point size weights (same logic as plot()) ---
+        rf      = RFSize.astype(float)
+        use_log = (rf.max() / (np.median(rf) + 1e-8)) > rf_size_log_threshold
+        rf_trans = 'log10' if use_log else 'identity'
+        rf_norm  = (rf - rf.min()) / (rf.max() - rf.min() + 1e-8)
+
+        # --- Point size scaled by M (same formula as plot()) ---
+        M = coords.shape[0]
+        point_size = max(2.0, 20.0 / np.sqrt(M))
+
+        # --- Subtitle and caption ---
+        sub = subtitle if subtitle is not None else f'Epoch {age}'
+        caption = None
+        if dm is not None:
+            lines = []
+            qnn_parts = []
+            for name in ('Q_local', 'Q_global', 'Q_AUC', 'LCMC_AUC', 'Trust_AUC'):
+                val = getattr(dm, name, None)
+                if val is not None:
+                    qnn_parts.append(f'{name}={val:.3f}')
+            if qnn_parts:
+                lines.append('  '.join(qnn_parts))
+            wafl = getattr(dm, 'CONN_WAFL', None)
+            se   = getattr(dm, 'CONN_WAFL_SE', None)
+            if wafl is not None:
+                wafl_str = f'CONN_WAFL={wafl:.3f}'
+                if se is not None:
+                    wafl_str += f' \u00b1 {se:.3f}'
+                lines.append(wafl_str)
+            if lines:
+                caption = '\n'.join(lines)
+
+        # --- Shared vis_tools kwargs ---
+        shared = dict(
+            x                    = coords[:, 0],
+            y                    = coords[:, 1],
+            point_size           = point_size,
+            point_size_wts       = rf_norm,
+            point_size_wts_trans = rf_trans,
+            graph                = adjacency,
+            edge_size            = 0.3,
+            edge_color           = '#BBBBBB',
+            xlab                 = xlab,
+            ylab                 = ylab,
+            title                = title,
+            subtitle             = sub,
+            caption              = caption,
+            legend_pos           = legend_pos,
+        )
+
+        # --- Dispatch ---
+        if color_by == 'labels':
+            return vis_embedding_discrete(
+                z            = WL,
+                ctab         = self.ctab,
+                legend_title = 'Label',
+                **shared,
+            )
+        else:
+            z            = W_mqe if color_by == 'mqe' else rf
             legend_title = 'MQE' if color_by == 'mqe' else 'RF Size'
             return vis_embedding_continuous(
                 z            = z,
@@ -1004,7 +1190,7 @@ class GTSOM:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _init_architecture(self, X, W, embed, labels):
+    def _init_architecture(self, X, W, embed, labels, ctab):
         """
         Wipe all architecture state and reinitialize from (X, W, embed).
 
@@ -1022,13 +1208,19 @@ class GTSOM:
         W : np.ndarray, shape (M, d)
         embed : Embedding
         labels : array-like or None
+        ctab : dict or None
+            Pre-built ``{label: hex_color_string}`` color table, or
+            ``None`` to auto-generate from ``self.recaller.WL_unq`` when
+            labels are available.
         """
+        from .vis_tools import build_ctab as _build_ctab
+
         # Wipe all mutable architecture state
         self.W          = W
         self.embed      = embed
         self.recaller   = VQRecaller(p=2, max_bmu=2, verbose=False)
         self.kernel     = NeighborKernel(h_min=self.nbr_influence_min)
-        self._validator = DataValidator(X)
+        self._validator = DataValidator(X, labels=labels)
         self.prevBMU    = np.full(X.shape[0], -1, dtype=int)
         self.W0         = W.copy()
         self.coords0    = embed.coords.copy()
@@ -1042,6 +1234,16 @@ class GTSOM:
         # Initial recall then complete age-0 snapshot (including DR metrics
         # and figure, since all learning parameters are already set)
         self._recall(X, labels=labels)
+
+        # Build or store ctab now that WL_unq is available
+        if labels is not None:
+            if ctab is not None:
+                self.ctab = ctab
+            else:
+                self.ctab = _build_ctab(self.recaller.WL_unq)
+        else:
+            self.ctab = None
+
         self._snapshot(include_fig=True)
 
     def _recall(self, X, labels=None):
@@ -1095,11 +1297,15 @@ class GTSOM:
         Operations are performed in this strict order:
 
         1. Compute ``delBMU`` from ``self.prevBMU`` (before overwriting).
-        2. Append the snapshot dict — including ``delBMU`` and ``W_mqe`` —
-           so that :meth:`plot` can read from ``learn_history_[-1]``.
+        2. Append the snapshot dict — including ``delBMU``, ``W_mqe``, and
+           all plot-reconstruction data — so that :meth:`get_snapshot_fig`
+           can regenerate a figure for any epoch.
         3. Overwrite ``self.prevBMU`` with the current BMU assignments.
         4. Optionally compute DR metrics and store in the snapshot.
-        5. Optionally call :meth:`plot` and store the figure.
+        5. If ``include_fig`` is True, call :meth:`get_snapshot_fig` on
+           the just-appended snapshot and display it inline (e.g. in a
+           notebook). The figure is not stored; it is generated on demand
+           by :meth:`get_snapshot_fig`.
 
         Because all learning parameters (including ``compute_dr_metrics``)
         are set in ``__init__`` before any architecture method is called,
@@ -1110,21 +1316,33 @@ class GTSOM:
         Parameters
         ----------
         include_fig : bool, default False
-            If True, call :meth:`plot` and store the figure under 'fig'.
+            If True, generate and display (but do not store) a figure for
+            the current snapshot. Controlled by the ``plot_every`` parameter
+            of :meth:`fit`.
         """
         # Step 1
         current_bmu = self.recaller.BMU[:, 0]
         delBMU = float((current_bmu != self.prevBMU).mean())
 
+        # Resolve color_by at snapshot time (mirrors plot() 'auto' logic)
+        snap_color_by = 'labels' if self.recaller.WL is not None else 'mqe'
+
         # Step 2
         self.learn_history_.append({
-            'age'        : self.age,
+            'age'      : self.age,
             # Global MQE: sqrt(mean(QE)) where QE is squared L2 distance — i.e. RMSE.
-            'mqe'        : float(np.sqrt(self.recaller.QE[:, 0].mean())),
-            'W_mqe'      : self._compute_W_mqe(),
-            'delBMU'     : delBMU,
-            'dr_metrics' : None,
-            'fig'        : None,
+            'mqe'      : float(np.sqrt(self.recaller.QE[:, 0].mean())),
+            'W_mqe'    : self._compute_W_mqe(),
+            'delBMU'   : delBMU,
+            'dr_metrics': None,
+            # Plot-reconstruction data — sufficient to regenerate any snapshot
+            # figure via get_snapshot_fig() without access to live GTSOM state.
+            'coords'   : self.embed.coords.copy(),
+            'adjacency': self.embed.adjacency.copy(),
+            'RFSize'   : self.recaller.RFSize.copy(),
+            'WL'       : (self.recaller.WL.copy()
+                          if self.recaller.WL is not None else None),
+            'color_by' : snap_color_by,
         })
 
         # Step 3
@@ -1136,7 +1354,7 @@ class GTSOM:
 
         # Step 5
         if include_fig:
-            self.learn_history_[-1]['fig'] = self.plot(color_by='auto')
+            self.get_snapshot_fig(-1).draw()
 
     def _snapshot_dr_metrics(self):
         """

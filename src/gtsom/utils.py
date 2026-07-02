@@ -16,16 +16,22 @@ from sklearn.manifold import SpectralEmbedding
 
 class DataValidator:
     """
-    Validates a data matrix X and stores a lightweight fingerprint for
-    consistency checking across subsequent calls.
+    Validates a data matrix X (and optionally observation labels) and stores
+    lightweight fingerprints for consistency checking across subsequent calls.
 
-    Construction validates X (must be 2-D) and records its fingerprint.
-    The :meth:`check` method warns if a later X does not match.
+    Construction validates X (must be 2-D) and records its fingerprint, along
+    with an optional label fingerprint derived from ``labels``.  The
+    :meth:`check` method warns whenever a later ``(X, labels)`` pair does not
+    match what was seen at construction.
 
     Parameters
     ----------
     X : array-like
         Data matrix to validate and fingerprint.
+    labels : array-like or None, optional
+        Observation labels.  If provided, a label fingerprint is stored as a
+        ``{str_label: count}`` dict so that label-universe and
+        per-class-count mismatches can be detected at :meth:`check` time.
 
     Raises
     ------
@@ -38,11 +44,22 @@ class DataValidator:
     >>> validator = DataValidator(np.ones((100, 5)))
     >>> validator.shape
     (100, 5)
-    >>> validator.check(np.ones((100, 5)))   # silent — matches
-    >>> validator.check(np.ones((200, 5)), context="fit")  # warns
+    >>> validator.check(np.ones((100, 5)))              # silent — matches
+    >>> validator.check(np.ones((200, 5)), context="fit")  # warns: X mismatch
+
+    With labels:
+
+    >>> y = np.array([0, 0, 1, 1, 2, 2])
+    >>> validator = DataValidator(np.ones((6, 3)), labels=y)
+    >>> validator.check(np.ones((6, 3)), labels=y)      # silent — matches
+    >>> validator.check(np.ones((6, 3)), labels=None, context="fit")  # warns: labels missing
     """
 
-    def __init__(self, X):
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    def __init__(self, X, labels=None):
         X = np.asarray(X)
         if X.ndim != 2:
             raise ValueError(f"X must be 2-D, got shape {X.shape}")
@@ -54,6 +71,11 @@ class DataValidator:
             float(X.min()),
             float(X.max()),
         )
+        self._label_fingerprint = self._build_label_fingerprint(labels)
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
     @property
     def shape(self):
@@ -65,19 +87,48 @@ class DataValidator:
         """dtype of the validated dataset."""
         return self._fingerprint[1]
 
-    def check(self, X, context=""):
+    @property
+    def has_labels(self):
+        """True if labels were provided at construction."""
+        return self._label_fingerprint is not None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def check(self, X, labels=None, context=""):
         """
-        Warn if X does not match the stored fingerprint.
+        Warn if X or labels do not match the stored fingerprints.
+
+        Four distinct warning cases are handled:
+
+        1. **X mismatch** — the incoming ``X`` has a different shape, dtype,
+           or summary statistics from the dataset seen at construction.
+        2. **Labels missing at check time** — labels were provided at
+           construction but ``labels=None`` here; ``recaller.WL`` will be
+           stale after this call.
+        3. **Label universe / count mismatch** — both construction and this
+           call provided labels, but the set of unique values or their per-class
+           counts differ; ``ctab`` and snapshot ``WL`` may be inconsistent.
+        4. **Labels provided only at check time** — labels were not provided at
+           construction; re-initialize the SOM with labels to enable label
+           coloring.
 
         Parameters
         ----------
         X : array-like
             Incoming data matrix to check.
+        labels : array-like or None, optional
+            Incoming observation labels to check.
         context : str, optional
-            Caller name included in the warning message for traceability.
+            Caller name included in warning messages for traceability
+            (e.g. ``"fit"``).
         """
+        prefix = f"{context}: " if context else ""
+
+        # --- Case 1: X fingerprint ---
         X = np.asarray(X)
-        current = (
+        current_fp = (
             X.shape,
             X.dtype,
             float(X.mean()),
@@ -85,26 +136,98 @@ class DataValidator:
             float(X.min()),
             float(X.max()),
         )
-        if current != self._fingerprint:
+        if current_fp != self._fingerprint:
             fp = self._fingerprint
-            prefix = f"{context}: " if context else ""
             warnings.warn(
-                f"{prefix}X does not match the dataset used at initialisation. "
+                f"{prefix}X does not match the dataset used at initialization. "
                 f"Expected shape={fp[0]}, dtype={fp[1]}, "
                 f"mean={fp[2]:.4g}, std={fp[3]:.4g}, "
                 f"min={fp[4]:.4g}, max={fp[5]:.4g}. "
-                f"Got shape={current[0]}, dtype={current[1]}, "
-                f"mean={current[2]:.4g}, std={current[3]:.4g}, "
-                f"min={current[4]:.4g}, max={current[5]:.4g}.",
+                f"Got shape={current_fp[0]}, dtype={current_fp[1]}, "
+                f"mean={current_fp[2]:.4g}, std={current_fp[3]:.4g}, "
+                f"min={current_fp[4]:.4g}, max={current_fp[5]:.4g}.",
                 UserWarning,
                 stacklevel=3,
             )
 
+        # --- Cases 2 / 3 / 4: label fingerprint ---
+        init_had_labels  = self._label_fingerprint is not None
+        check_has_labels = labels is not None
+
+        if init_had_labels and not check_has_labels:
+            # Case 2
+            warnings.warn(
+                f"{prefix}Labels were provided at initialization but not passed "
+                f"here. recaller.WL will not be updated and will reflect "
+                f"prototype–label assignments from the previous epoch.",
+                UserWarning,
+                stacklevel=3,
+            )
+        elif init_had_labels and check_has_labels:
+            # Case 3: compare fingerprints
+            current_lf = self._build_label_fingerprint(labels)
+            if current_lf != self._label_fingerprint:
+                warnings.warn(
+                    f"{prefix}Labels passed here differ from those provided at "
+                    f"initialization (different label universe or per-class "
+                    f"counts). ctab and snapshot WL values may be inconsistent. "
+                    f"Expected label counts: {self._label_fingerprint}. "
+                    f"Got: {current_lf}.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+        elif not init_had_labels and check_has_labels:
+            # Case 4
+            warnings.warn(
+                f"{prefix}Labels were not provided at initialization. "
+                f"Re-initialize the SOM via from_grid() or from_data() with "
+                f"labels= to enable label coloring and consistent snapshot WL.",
+                UserWarning,
+                stacklevel=3,
+            )
+        # else: neither had labels — silent, nothing to check.
+
+    # ------------------------------------------------------------------
+    # Dunder
+    # ------------------------------------------------------------------
+
     def __repr__(self):
+        label_info = (
+            f", labels={list(self._label_fingerprint.keys())}"
+            if self._label_fingerprint is not None
+            else ""
+        )
         return (
             f"DataValidator(shape={self._fingerprint[0]}, "
-            f"dtype={self._fingerprint[1]})"
+            f"dtype={self._fingerprint[1]}{label_info})"
         )
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_label_fingerprint(labels):
+        """
+        Build a ``{str_label: count}`` dict from ``labels``, or return
+        ``None`` if ``labels`` is ``None``.
+
+        Labels are str-coerced before counting so that, for example,
+        ``np.int64(0)`` and ``int(0)`` both map to ``'0'`` and compare
+        equal across sessions.  None/NaN entries are silently excluded.
+        """
+        if labels is None:
+            return None
+        arr = np.asarray(labels).ravel()
+        # Exclude missing values; coerce survivors to str
+        str_labels = [
+            str(v) for v in arr
+            if not (v is None or (isinstance(v, float) and np.isnan(v)))
+        ]
+        if not str_labels:
+            return {}
+        uniq, counts = np.unique(str_labels, return_counts=True)
+        return dict(zip(uniq.tolist(), counts.tolist()))
 
 
 # ---------------------------------------------------------------------------
