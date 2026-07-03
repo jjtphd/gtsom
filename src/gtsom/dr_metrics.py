@@ -150,6 +150,48 @@ class DRMetricsResult:
         """Return metric values as a plain dict."""
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
+    def to_dict(self):
+        """
+        Return a serialization-ready dict of this result.
+
+        ``None`` values are stored as ``float('nan')`` so that the dict
+        contains only plain Python floats (no None), which HDF5 attrs
+        can store directly.  Reconstructed by :meth:`from_dict`.
+
+        Returns
+        -------
+        dict mapping field name → float (nan where the field is None)
+        """
+        return {
+            f.name: float("nan") if getattr(self, f.name) is None
+                    else float(getattr(self, f.name))
+            for f in fields(self)
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        """
+        Reconstruct a DRMetricsResult from a dict produced by
+        :meth:`to_dict`.
+
+        ``nan`` values are converted back to ``None``.
+
+        Parameters
+        ----------
+        d : dict
+            As returned by :meth:`to_dict`.
+
+        Returns
+        -------
+        DRMetricsResult
+        """
+        kwargs = {
+            name: None if (val is None or (isinstance(val, float) and np.isnan(val)))
+                  else float(val)
+            for name, val in d.items()
+        }
+        return cls(**kwargs)
+
     def __repr__(self):
         lines = ["DRMetricsResult("]
         for f in fields(self):

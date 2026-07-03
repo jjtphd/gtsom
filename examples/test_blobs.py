@@ -159,9 +159,41 @@ print(f"  {som}")
 print(f"  Empty RFs after fit: {(som.recaller.RFSize == 0).sum()} / {som.M}")
 
 # ------------------------------------------------------------------
-# 5. Learning curves
+# 5. Save, load, and resume training
 # ------------------------------------------------------------------
-section("5. Learning curves")
+section("5. Save / load / resume")
+
+SAVE_PATH = os.path.join(OUTDIR, 'blobs_som.h5')
+
+print(f"  Saving fitted SOM to {SAVE_PATH} ...")
+t0 = time.perf_counter()
+som.save(SAVE_PATH)
+print(f"  Saved in {time.perf_counter() - t0:.2f}s  "
+      f"({os.path.getsize(SAVE_PATH) / 1024:.1f} KB)")
+
+print(f"  Loading from {SAVE_PATH} ...")
+t0 = time.perf_counter()
+som_loaded = GTSOM.load(SAVE_PATH)
+print(f"  Loaded in {time.perf_counter() - t0:.2f}s")
+print(f"  {som_loaded}")
+assert som_loaded.age == som.age, "age mismatch after load"
+assert len(som_loaded.learn_history_) == len(som.learn_history_), \
+    "history length mismatch after load"
+
+print(f"  Resuming training for 10 more epochs (age {som_loaded.age} → {som_loaded.age + 10}) ...")
+t0 = time.perf_counter()
+som_loaded.fit(X, n_epochs=10, labels=y, verbose=True, plot_every=0)
+print(f"  Resume done in {time.perf_counter() - t0:.2f}s")
+print(f"  {som_loaded}")
+
+# Use som_loaded for all subsequent sections so plots reflect the full
+# training run (original epochs + 10 resumed epochs)
+som = som_loaded
+
+# ------------------------------------------------------------------
+# 6. Learning curves
+# ------------------------------------------------------------------
+section("6. Learning curves")
 
 ages_arr   = np.array([s['age']    for s in som.learn_history_])
 mqes_arr   = np.array([s['mqe']    for s in som.learn_history_])
@@ -190,9 +222,9 @@ plt.tight_layout()
 savefig(fig_curves, 'blobs_learning_curves.png')
 
 # ------------------------------------------------------------------
-# 6. SOM lattice plots — all three color_by modes
+# 7. SOM lattice plots — all three color_by modes
 # ------------------------------------------------------------------
-section("6. SOM lattice plots")
+section("7. SOM lattice plots")
 
 for color_by, fname in [
     ('labels',  'blobs_som_labels.png'),
@@ -208,7 +240,7 @@ for color_by, fname in [
     savegg(g, fname)
 
 # ------------------------------------------------------------------
-# 7. Done
+# 8. Done
 # ------------------------------------------------------------------
 section("Done")
 print(f"  Total train_time : {som.train_time:.2f}s")

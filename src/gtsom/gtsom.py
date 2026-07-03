@@ -1480,6 +1480,75 @@ class GTSOM:
     # Dunder
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def save(self, path):
+        """
+        Save this GTSOM to an HDF5 file.
+
+        Serializes all learning parameters, architecture state (W, Embedding,
+        VQRecaller), training history (``learn_history_``), and the color
+        table (``ctab``).  The file can be reloaded with :meth:`load` to
+        resume training, run :meth:`transform`, or reproduce any historical
+        plot via :meth:`get_snapshot_fig` — no retraining required.
+
+        Parameters
+        ----------
+        path : str
+            Destination file path.  Created or overwritten.
+
+        See Also
+        --------
+        GTSOM.load : Reconstruct a GTSOM from a saved file.
+
+        Examples
+        --------
+        >>> som.fit(X, n_epochs=100)
+        >>> som.save("som.h5")
+        >>> som2 = GTSOM.load("som.h5")
+        >>> som2.plot()
+        >>> som2.fit(X, n_epochs=50)   # resume training
+        """
+        from .io import GTSOMio
+        GTSOMio(self).save(path)
+
+    @classmethod
+    def load(cls, path):
+        """
+        Load a GTSOM from an HDF5 file created by :meth:`save`.
+
+        Parameters
+        ----------
+        path : str
+            Path to an HDF5 file previously created by :meth:`save`.
+
+        Returns
+        -------
+        GTSOM
+            Fully reconstructed instance, ready for :meth:`transform`,
+            :meth:`plot`, :meth:`get_snapshot_fig`, or :meth:`fit`.
+
+        See Also
+        --------
+        GTSOM.save : Save a GTSOM to an HDF5 file.
+
+        Examples
+        --------
+        >>> som = GTSOM.load("som.h5")
+        >>> som.age
+        100
+        >>> som.plot()
+        >>> som.fit(X, n_epochs=50)
+        """
+        from .io import GTSOMio
+        return GTSOMio.load(path)
+
+    # ------------------------------------------------------------------
+    # Dunder
+    # ------------------------------------------------------------------
+
     def __repr__(self):
         built   = self.W is not None
         fitted  = self.age > 0

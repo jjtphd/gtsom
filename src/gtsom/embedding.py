@@ -324,6 +324,65 @@ class Embedding:
             f"adj_metric='{self.adj_metric}', dist_metric='{self.dist_metric}')"
         )
 
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self):
+        """
+        Return a plain dict representation of this Embedding.
+
+        All values are Python/numpy primitives (arrays, sparse matrices,
+        scalars, or None) — no HDF5 types.  Intended for use with
+        :class:`~gtsom.io.GTSOMio`, which handles the HDF5 encoding.
+
+        Returns
+        -------
+        dict with keys:
+            coords      np.ndarray  (M, dim)
+            adj_metric  str
+            dist_metric str
+            _shape      list of int or None
+            adjacency   scipy.sparse.csr_matrix or None
+            dist        np.ndarray (M, M) or None
+        """
+        return {
+            "coords":      self.coords,
+            "adj_metric":  self.adj_metric,
+            "dist_metric": self.dist_metric,
+            "_shape":      list(self._shape) if self._shape is not None else None,
+            "adjacency":   self.adjacency,
+            "dist":        self.dist,
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        """
+        Reconstruct an Embedding from a dict produced by :meth:`to_dict`.
+
+        Bypasses ``__init__`` (and therefore ``compute_topo()``) so that the
+        exact saved adjacency and distance matrix are restored rather than
+        being recomputed from coords.
+
+        Parameters
+        ----------
+        d : dict
+            As returned by :meth:`to_dict`.
+
+        Returns
+        -------
+        Embedding
+        """
+        obj = cls.__new__(cls)
+        obj.coords      = d["coords"]
+        obj.adj_metric  = d["adj_metric"]
+        obj.dist_metric = d["dist_metric"]
+        _shape          = d.get("_shape")
+        obj._shape      = tuple(_shape) if _shape is not None else None
+        obj.adjacency   = d.get("adjacency")
+        obj.dist        = d.get("dist")
+        return obj
+
 
 # ----------------------------------------------------------------------
 # Module-level helper functions (private)

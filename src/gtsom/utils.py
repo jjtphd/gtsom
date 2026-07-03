@@ -203,6 +203,85 @@ class DataValidator:
         )
 
     # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self):
+        """
+        Return a plain dict representation of this validator's fingerprints.
+
+        The training data ``X`` is not stored — only the summary statistics
+        needed to detect mismatches in subsequent :meth:`check` calls.
+        The dtype is stored as a string and cast back to ``np.dtype`` on load.
+
+        Returns
+        -------
+        dict with keys:
+            shape   list of int
+            dtype   str
+            mean    float
+            std     float
+            min     float
+            max     float
+            has_labels  bool
+            label_keys    np.ndarray of object (str labels) or None
+            label_counts  np.ndarray of int64 or None
+        """
+        fp = self._fingerprint
+        d = {
+            "shape": list(fp[0]),
+            "dtype": str(fp[1]),
+            "mean":  float(fp[2]),
+            "std":   float(fp[3]),
+            "min":   float(fp[4]),
+            "max":   float(fp[5]),
+            "has_labels": self._label_fingerprint is not None,
+        }
+        if self._label_fingerprint is not None:
+            keys   = list(self._label_fingerprint.keys())
+            counts = list(self._label_fingerprint.values())
+            d["label_keys"]   = np.array(keys,   dtype=object)
+            d["label_counts"] = np.array(counts, dtype=np.int64)
+        else:
+            d["label_keys"]   = None
+            d["label_counts"] = None
+        return d
+
+    @classmethod
+    def from_dict(cls, d):
+        """
+        Reconstruct a DataValidator from a dict produced by :meth:`to_dict`.
+
+        Bypasses ``__init__`` so that the stored fingerprint is restored
+        exactly without requiring the original data ``X``.
+
+        Parameters
+        ----------
+        d : dict
+            As returned by :meth:`to_dict`.
+
+        Returns
+        -------
+        DataValidator
+        """
+        obj = cls.__new__(cls)
+        obj._fingerprint = (
+            tuple(int(x) for x in d["shape"]),
+            np.dtype(d["dtype"]),
+            float(d["mean"]),
+            float(d["std"]),
+            float(d["min"]),
+            float(d["max"]),
+        )
+        if d.get("has_labels") and d.get("label_keys") is not None:
+            keys   = [str(k) for k in d["label_keys"]]
+            counts = [int(c) for c in d["label_counts"]]
+            obj._label_fingerprint = dict(zip(keys, counts))
+        else:
+            obj._label_fingerprint = None
+        return obj
+
+    # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
@@ -610,3 +689,38 @@ class ExponentialAnneal:
             f"final={self.final}, "
             f"tau={self.tau:.4g})"
         )
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self):
+        """
+        Return a plain dict representation of this schedule.
+
+        Returns
+        -------
+        dict with keys: initial (float), final (float), tau (float)
+        """
+        return {
+            "initial": self.initial,
+            "final":   self.final,
+            "tau":     self.tau,
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        """
+        Reconstruct an ExponentialAnneal from a dict produced by
+        :meth:`to_dict`.
+
+        Parameters
+        ----------
+        d : dict
+            As returned by :meth:`to_dict`.
+
+        Returns
+        -------
+        ExponentialAnneal
+        """
+        return cls(initial=d["initial"], final=d["final"], tau=d["tau"])
