@@ -373,51 +373,8 @@ class GTSOMio:
             Destination file path.  Created or overwritten.
         """
         import h5py
-        from importlib.metadata import version as _pkg_version
-
-        som = self._som
-
-        try:
-            _version = _pkg_version("gtsom")
-        except Exception:
-            _version = "unknown"
-
         with h5py.File(path, "w") as f:
-
-            # --- meta -----------------------------------------------------
-            mg = f.create_group(self._GRP_META)
-            mg.attrs["gtsom_version"] = _version
-            mg.attrs["class"]         = "GTSOM"
-
-            # --- params ---------------------------------------------------
-            _write_dict(f.create_group(self._GRP_PARAMS),
-                        self._build_params_dict(som))
-
-            # --- state ----------------------------------------------------
-            _write_dict(f.create_group(self._GRP_STATE),
-                        self._build_state_dict(som))
-
-            # --- arch -----------------------------------------------------
-            ag = f.create_group(self._GRP_ARCH)
-            _write_dict(ag, self._build_arch_dict(som))
-
-            # VQRecaller: delegate to its own to_dict / written separately
-            # so its internal group structure is self-contained
-            if som.recaller is not None:
-                rg = ag.create_group(self._GRP_RECALLER)
-                _write_dict(rg, som.recaller.to_dict())
-
-            # --- ctab -----------------------------------------------------
-            if som.ctab is not None:
-                _write_dict(f.create_group(self._GRP_CTAB),
-                            self._build_ctab_dict(som.ctab))
-
-            # --- history --------------------------------------------------
-            hg = f.create_group(self._GRP_HISTORY)
-            hg.attrs["n_snapshots"] = len(som.learn_history_)
-            for i, snap in enumerate(som.learn_history_):
-                sg = hg.create_group(self._EPOCH_FMT.format(i))
-                _write_dict(sg, self._build_snapshot_dict(snap))
+            self._write_to_group(f)
 
     @classmethod
     def load(cls, path):
@@ -437,6 +394,90 @@ class GTSOMio:
             :meth:`~GTSOM.fit` (to resume training).
         """
         import h5py
+        with h5py.File(path, "r") as f:
+            return cls._load_from_group(f)
+
+    # ------------------------------------------------------------------
+    # Group-level API (for embedding into a larger HDF5 file)
+    # ------------------------------------------------------------------
+
+    def _write_to_group(self, group):
+        """
+        Write the GTSOM into an already-open h5py Group.
+
+        Intended for use by external packages (e.g. soumap) that need to
+        embed a GTSOM as a subgroup of a larger HDF5 file without going
+        through a temporary file.  ``save()`` delegates to this method
+        after opening the file.
+
+        Parameters
+        ----------
+        group : h5py.Group
+            Open, writable group to write into.  All GTSOM subgroups
+            (meta, params, state, arch, ctab, history) are created
+            as children of this group.
+        """
+        from importlib.metadata import version as _pkg_version
+
+        som = self._som
+
+        try:
+            _version = _pkg_version("gtsom")
+        except Exception:
+            _version = "unknown"
+
+        # --- meta ---------------------------------------------------------
+        mg = group.create_group(self._GRP_META)
+        mg.attrs["gtsom_version"] = _version
+        mg.attrs["class"]         = "GTSOM"
+
+        # --- params -------------------------------------------------------
+        _write_dict(group.create_group(self._GRP_PARAMS),
+                    self._build_params_dict(som))
+
+        # --- state --------------------------------------------------------
+        _write_dict(group.create_group(self._GRP_STATE),
+                    self._build_state_dict(som))
+
+        # --- arch ---------------------------------------------------------
+        ag = group.create_group(self._GRP_ARCH)
+        _write_dict(ag, self._build_arch_dict(som))
+
+        # VQRecaller: written separately so its group structure is self-contained
+        if som.recaller is not None:
+            rg = ag.create_group(self._GRP_RECALLER)
+            _write_dict(rg, som.recaller.to_dict())
+
+        # --- ctab ---------------------------------------------------------
+        if som.ctab is not None:
+            _write_dict(group.create_group(self._GRP_CTAB),
+                        self._build_ctab_dict(som.ctab))
+
+        # --- history ------------------------------------------------------
+        hg = group.create_group(self._GRP_HISTORY)
+        hg.attrs["n_snapshots"] = len(som.learn_history_)
+        for i, snap in enumerate(som.learn_history_):
+            sg = hg.create_group(self._EPOCH_FMT.format(i))
+            _write_dict(sg, self._build_snapshot_dict(snap))
+
+    @classmethod
+    def _load_from_group(cls, group):
+        """
+        Reconstruct a GTSOM from an already-open h5py Group.
+
+        Intended for use by external packages (e.g. soumap) that embed a
+        GTSOM as a subgroup of a larger HDF5 file.  ``load()`` delegates
+        to this method after opening the file.
+
+        Parameters
+        ----------
+        group : h5py.Group
+            Open, readable group previously written by :meth:`_write_to_group`.
+
+        Returns
+        -------
+        GTSOM
+        """
         from gtsom.gtsom import GTSOM
         from gtsom.embedding import Embedding
         from gtsom.utils import ExponentialAnneal, DataValidator
@@ -444,71 +485,70 @@ class GTSOMio:
         from gtsom.dr_metrics import DRMetricsResult
         from vqlp import VQRecaller
 
-        with h5py.File(path, "r") as f:
+        # --- params -------------------------------------------------------
+        params = _read_dict(group[cls._GRP_PARAMS])
+        state  = _read_dict(group[cls._GRP_STATE])
+        arch   = _read_dict(group[cls._GRP_ARCH])
 
-            # --- params ---------------------------------------------------
-            params = _read_dict(f[cls._GRP_PARAMS])
-            state  = _read_dict(f[cls._GRP_STATE])
-            arch   = _read_dict(f[cls._GRP_ARCH])
+        # --- assemble GTSOM without calling __init__ ----------------------
+        som = GTSOM.__new__(GTSOM)
 
-            # --- assemble GTSOM without calling __init__ ------------------
-            som = GTSOM.__new__(GTSOM)
+        # Schedules
+        som.rho_schedule   = ExponentialAnneal.from_dict(params["rho_schedule"])
+        som.alpha_schedule = ExponentialAnneal.from_dict(params["alpha_schedule"])
 
-            # Schedules
-            som.rho_schedule   = ExponentialAnneal.from_dict(params["rho_schedule"])
-            som.alpha_schedule = ExponentialAnneal.from_dict(params["alpha_schedule"])
+        # Scalar hyperparameters
+        som.nbr_influence_min  = params["nbr_influence_min"]
+        som.proto_topo         = params["proto_topo"]
+        som.compute_dr_metrics = params["compute_dr_metrics"]
+        som.n_jobs             = params["n_jobs"]
+        som.random_state       = params["random_state"]
 
-            # Scalar hyperparameters
-            som.nbr_influence_min  = params["nbr_influence_min"]
-            som.proto_topo         = params["proto_topo"]
-            som.compute_dr_metrics = params["compute_dr_metrics"]
-            som.n_jobs             = params["n_jobs"]
-            som.random_state       = params["random_state"]
+        # Training state
+        som.age        = state["age"]
+        som.train_time = state["train_time"]
 
-            # Training state
-            som.age        = state["age"]
-            som.train_time = state["train_time"]
+        # Architecture arrays
+        som.W       = arch.get("W")
+        som.W0      = arch.get("W0")
+        som.coords0 = arch.get("coords0")
+        som.prevBMU = arch.get("prevBMU")
+        som.nbr_W   = arch.get("nbr_W")
 
-            # Architecture arrays
-            som.W       = arch.get("W")
-            som.W0      = arch.get("W0")
-            som.coords0 = arch.get("coords0")
-            som.prevBMU = arch.get("prevBMU")
-            som.nbr_W   = arch.get("nbr_W")
+        # Embedding
+        som.embed = (Embedding.from_dict(arch["embedding"])
+                     if "embedding" in arch else None)
 
-            # Embedding
-            som.embed = (Embedding.from_dict(arch["embedding"])
-                         if "embedding" in arch else None)
+        # NeighborKernel — reconstruct from saved scalars
+        k = arch.get("kernel", {})
+        som.kernel = (NeighborKernel(kind=k["kind"], h_min=k["h_min"])
+                      if k else None)
 
-            # NeighborKernel — reconstruct from saved scalars
-            k = arch.get("kernel", {})
-            som.kernel = (NeighborKernel(kind=k["kind"], h_min=k["h_min"])
-                          if k else None)
+        # DataValidator
+        som._validator = (DataValidator.from_dict(arch["validator"])
+                          if "validator" in arch else None)
 
-            # DataValidator
-            som._validator = (DataValidator.from_dict(arch["validator"])
-                              if "validator" in arch else None)
+        # VQRecaller
+        arch_grp = group[cls._GRP_ARCH]
+        som.recaller = (VQRecaller.from_dict(_read_dict(arch_grp[cls._GRP_RECALLER]))
+                        if cls._GRP_RECALLER in arch_grp else None)
 
-            # VQRecaller
-            som.recaller = (VQRecaller.from_dict(_read_dict(f[cls._GRP_ARCH][cls._GRP_RECALLER]))
-                            if cls._GRP_RECALLER in f[cls._GRP_ARCH] else None)
+        # ctab
+        som.ctab = None
+        if cls._GRP_CTAB in group:
+            ctab_d   = _read_dict(group[cls._GRP_CTAB])
+            som.ctab = dict(zip(ctab_d["keys"], ctab_d["values"]))
 
-            # ctab
-            som.ctab = None
-            if cls._GRP_CTAB in f:
-                ctab_d   = _read_dict(f[cls._GRP_CTAB])
-                som.ctab = dict(zip(ctab_d["keys"], ctab_d["values"]))
-
-            # history
-            hg      = f[cls._GRP_HISTORY]
-            n_snaps = int(hg.attrs.get("n_snapshots", 0))
-            som.learn_history_ = [
-                cls._restore_snapshot(
-                    _read_dict(hg[cls._EPOCH_FMT.format(i)]),
-                    DRMetricsResult,
-                )
-                for i in range(n_snaps)
-            ]
+        # history
+        hg      = group[cls._GRP_HISTORY]
+        n_snaps = int(hg.attrs.get("n_snapshots", 0))
+        som.learn_history_ = [
+            cls._restore_snapshot(
+                _read_dict(hg[cls._EPOCH_FMT.format(i)]),
+                DRMetricsResult,
+            )
+            for i in range(n_snaps)
+        ]
 
         return som
 
