@@ -34,11 +34,11 @@ classifiers = [
 ]
 
 # NOTE ON vqlp / faiss:
-# gtsom requires vqlp (https://github.com/jt-ut/vqlp) for vector quantization
+# gtsom requires vqlp (https://github.com/jjtphd/vqlp) for vector quantization
 # and recall, but vqlp is NOT published on PyPI and cannot be listed here as
 # a normal dependency. It must be installed manually BEFORE installing gtsom:
 #
-#     pip install git+https://github.com/jt-ut/vqlp.git
+#     pip install git+https://github.com/jjtphd/vqlp.git
 #     pip install gtsom
 #
 # See README.md for full installation instructions.
@@ -77,9 +77,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://jt-ut.github.io/gtsom"
-Documentation = "https://jt-ut.github.io/gtsom"
-Repository = "https://github.com/jt-ut/gtsom"
+Homepage = "https://jjtphd.github.io/gtsom"
+Documentation = "https://jjtphd.github.io/gtsom"
+Repository = "https://github.com/jjtphd/gtsom"
 
 [tool.setuptools.packages.find]
 where = ["src"]

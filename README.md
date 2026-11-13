@@ -18,14 +18,14 @@ Key features:
 ## Installation
 
 ```bash
-pip install git+https://github.com/jt-ut/gtsom.git
+pip install git+https://github.com/jjtphd/gtsom.git
 ```
 
-`gtsom` depends on [vqlp](https://github.com/jt-ut/vqlp) for vector quantization and recall. **`vqlp` is not published on PyPI** and must be installed manually from GitHub *before* installing `gtsom`:
+`gtsom` depends on [vqlp](https://github.com/jjtphd/vqlp) for vector quantization and recall. **`vqlp` is not published on PyPI** and must be installed manually from GitHub *before* installing `gtsom`:
 
 ```bash
-pip install git+https://github.com/jt-ut/vqlp.git
-pip install git+https://github.com/jt-ut/gtsom.git
+pip install git+https://github.com/jjtphd/vqlp.git
+pip install git+https://github.com/jjtphd/gtsom.git
 ```
 
 `vqlp` itself depends on [faiss](https://github.com/facebookresearch/faiss) (`faiss-cpu` on PyPI). If `vqlp`'s installation fails on faiss, install `faiss-cpu` for your platform first — note that prebuilt wheels are not available for all platforms (e.g. some Apple Silicon configurations), in which case consult the [faiss installation instructions](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md).
@@ -77,7 +77,7 @@ coords = som.transform(X)   # (N, 2) array of lattice positions
 
 Full documentation and a worked tutorial on MNIST handwritten digits is available at:
 
-**[https://jt-ut.github.io/gtsom](https://jt-ut.github.io/gtsom)**
+**[https://jjtphd.github.io/gtsom](https://jjtphd.github.io/gtsom)**
 
 ## Citation
 
