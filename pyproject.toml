@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "Josh Taylor", email = "joshtaylor@utexas.edu"},
+    {name = "Joshua J. Taylor", email = "joshtaylor@utexas.edu"},
 ]
 keywords = [
     "self-organizing map",
